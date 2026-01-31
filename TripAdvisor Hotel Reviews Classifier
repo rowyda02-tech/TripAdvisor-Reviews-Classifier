@@ -1,0 +1,463 @@
+# **TRIP-ADVISOR HOTEL REVIEWS**
+
+
+**AIM OF THE PROJECT:**
+
+This program performs text preprocessing, including cleaning, lemmatization, and spell checking, and then builds a logistic regression model for classifying hotel reviews based on their ratings.
+
+**Imports and Setup:**
+*   Import necessary libraries such as pandas, string, nltk, and others.
+*   Download the NLTK data and mount Google Drive.
+*   Load the hotel reviews dataset from Google Drive.
+
+import pandas as pd
+import string
+import nltk
+import numpy as np
+from IPython.display import display, Markdown
+from sklearn.metrics.pairwise import cosine_similarity
+import matplotlib.pyplot as plt
+import re
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk import pos_tag
+from nltk.corpus import wordnet
+from nltk.stem import WordNetLemmatizer
+from nltk.corpus import stopwords
+from collections import Counter
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.model_selection import GridSearchCV
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+# Spelling libraries
+!pip install textblob
+!pip install pyspellchecker
+!pip install swifter
+
+from textblob import TextBlob
+from spellchecker import SpellChecker
+import swifter
+
+# Download NLTK data
+
+nltk.download('all')
+
+# Download the dataset from Google Drive
+
+!gdown --id 1x3tD5TlBAxeQXydvb-x8CI1BKxpLqjUh
+
+# Read the CSV file into a Pandas DataFrame
+
+df = pd.read_csv('tripadvisor_hotel_reviews.csv')
+df.head()
+
+Text Cleaning:
+*  Convert all text in the 'Review' column to lowercase.
+*  Remove punctuation, stopwords, frequent words, rare words, special characters, and perform tockenization, lemmatization and part-of-speech tagging.
+*  Remove URLs and HTML tags from the text.
+*  Install and use the TextBlob library for spelling correction.
+
+
+# Calculate statistics on the dataset
+def calculate_dataset_statistics(df):
+    # Number of reviews in the dataset
+    num_reviews = len(df)
+
+    # Total number of words in the dataset
+    total_words = df['Review'].apply(lambda x: len(x.split())).sum()
+
+    # Average number of words per review
+    avg_words_per_review = total_words / num_reviews
+
+    # Total number of sentences in the dataset
+    total_sentences = df['Review'].apply(lambda x: len(re.findall(r'\.|\?|!', x))).sum()
+
+    # Average number of sentences per review
+    avg_sentences_per_review = total_sentences / num_reviews
+
+    print("Dataset Statistics:")
+    print(f"Number of Reviews: {num_reviews}")
+    print(f"Total Number of Words: {total_words}")
+    print(f"Average Number of Words per Review: {avg_words_per_review:.2f}")
+    print(f"Total Number of Sentences: {total_sentences}")
+    print(f"Average Number of Sentences per Review: {avg_sentences_per_review:.2f}")
+
+# Call the function with your DataFrame
+calculate_dataset_statistics(df)
+
+
+# Convert all text to lowercase
+
+df['clean_text']= df['Review'].str.lower()
+df.head()
+
+# Removal of punctuation
+
+def remove_punctuations(text):
+  punctuations= string.punctuation
+  return text.translate(str.maketrans('','',punctuations))
+
+df['clean_text']=df['clean_text'].apply(lambda x: remove_punctuations(x))
+df.head()
+
+# we want to keep some specific words because they are important for the meaning of the text
+words_to_keep = set(["not","but"])
+
+# remove the stopwords and tokenize the text
+
+STOPWORDS = set(stopwords.words('english')).difference(words_to_keep)
+
+def remove_stopwords(text):
+    words = word_tokenize(text)
+    filtered_words = [word for word in text.split() if word.lower() not in STOPWORDS]
+    return " ".join(filtered_words)
+
+df['clean_text']=df['clean_text'].apply(lambda x: remove_stopwords(x))
+df.head()
+
+# Removal of frequent words
+
+from collections import Counter
+word_count = Counter()
+for text in df['clean_text']:
+  for word in text.split():
+    word_count[word] += 1
+#word_count.most_common(10)
+
+FREQUENT_words= set(word for(word, wc) in word_count.most_common(10)).difference(words_to_keep)
+def remove_freq_words(text):
+   return " ".join([word for word in text.split() if word not in FREQUENT_words])
+
+df['clean_text']=df['clean_text'].apply(lambda x: remove_freq_words(x))
+df.head()
+
+# Removal of rare words
+
+RARE_words= set((word, wc) for(word, wc) in word_count.most_common()[:-1000:-1]).difference(words_to_keep)
+#RARE_words
+
+def remove_rare_words(text):
+   return " ".join([word for word in text.split() if word not in RARE_words])
+
+df['clean_text']=df['clean_text'].apply(lambda x: remove_rare_words(x))
+df.head()
+
+def remove_spl_chars(text):
+  text = re.sub('[^a-zA-Z0-9]', ' ' ,text)
+  text = re.sub('\s+', ' ', text)
+  return text
+
+df['clean_text']=df['clean_text'].apply(lambda x: remove_spl_chars(x))
+df.head()
+
+Two methods can be used to derive the root of words: Stemmatization and Lemmatization.
+We noticed that Stemmatization produced better results, so we decided to proceed with it.
+
+
+# Stemming: get to the root of the word
+from nltk.stem.porter import PorterStemmer
+
+ps=PorterStemmer()
+def stem_words(text):
+  return " ".join([ps.stem(word) for word in text.split()])
+
+# Stemmatized text
+df['clean_text']=df['clean_text'].apply(lambda x: stem_words(x))
+df.head()
+
+
+'''
+# Lemmatization and pos tagging
+lemmatizer= WordNetLemmatizer()
+wordnet_map={"N":wordnet.NOUN, "V":wordnet.VERB, "ADJ":wordnet.ADJ, "ADV":wordnet.ADV}
+
+def lemmatize_words(text):
+  #find pos tags
+  pos_text=pos_tag(text.split())
+  return " ".join([lemmatizer.lemmatize(word, wordnet_map.get(pos[0], wordnet.NOUN)) for word, pos in pos_text])
+##wordnet.noun here means that if the word is different from the previously stated types it will just pass as noun
+
+# Lemmatized text
+df['clean_text']=df['clean_text'].apply(lambda x: lemmatize_words(x))
+df.head()
+'''
+
+# Removal of URL
+def removal_url(text):
+  return re.sub(r'https?://\s+|www\.\s+', '', text)
+
+df['clean_text']=df['clean_text'].apply(lambda x: removal_url(x))
+df.head()
+
+# Removal of HTML tags
+def remove_html_tags(text):
+  return re.sub(r'<.*?>', '', text)
+
+df['clean_text']=df['clean_text'].apply(lambda x: remove_html_tags(x))
+df.head()
+
+Due to the **spellchecker** taking a long time in execution we only applied to a subset of the dataframe, if you desire to apply it to the whole dataframe **uncoment** the line _"df['clean_text'] = df['clean_text'].swifter.apply(correct_spelling)"_
+
+'''Run time: around 5 minutes'''
+
+# Create a SpellChecker instance
+spell = SpellChecker()
+
+# Function to correct spelling in a given text
+def correct_spelling(text):
+    blob = TextBlob(text)
+    misspelled_text = spell.unknown(blob.words)
+
+    corrected_words = [spell.correction(word) if word in misspelled_text else word for word in blob.words]
+
+    # Replace None with the original word
+    corrected_words = [word if word is not None else orig_word for word, orig_word in zip(corrected_words, blob.words)]
+
+    return " ".join(corrected_words)
+
+#create a subset of the dataset to speed the process of spell checking due to the time it takes
+subset_df = df.head(100)  # Adjust the number as needed
+
+# Apply the spelling correction function on the subset
+df['spelling'] = subset_df['clean_text'].swifter.apply(correct_spelling)
+
+'''Uncomment this is the line of code to execute the spell checking on the whole dataset'''
+#df['clean_text'] = df['clean_text'].swifter.apply(correct_spelling)
+
+# Display the updated DataFrame
+df.head()
+
+
+def plot_top_words_frequency(data_frame, column_name, top_n=10):
+    text_data = " ".join(data_frame[column_name])
+
+    # Preprocessing
+    tokens = word_tokenize(text_data.lower())
+    stop_words = set(stopwords.words("english"))
+    tokens = [word for word in tokens if word not in stop_words and word not in string.punctuation]
+
+    # Calculate word frequencies
+    word_freq = Counter(tokens)
+
+    # Get top N most common words
+    top_words = word_freq.most_common(top_n)
+
+    words = [word for word, freq in top_words]
+    frequencies = [freq for word, freq in top_words]
+
+    sns.set(style="whitegrid")
+
+    plt.figure(figsize=(10, 6))
+    sns.barplot(x=frequencies, y=words)
+    plt.xlabel("Frequency")
+    plt.ylabel("Words")
+    plt.title(f"Top {top_n} Most Common Words in '{column_name}'")
+    plt.tight_layout()
+
+    plt.show()
+
+# Plot top word frequencies from the 'text_column'
+plot_top_words_frequency(df, 'clean_text')
+
+**Splitting and Preparing Data:**
+*  Split the dataset into training and testing sets, using the 'Rating' column as the label.
+
+# training and testing having rating as the label
+X_train, X_test, y_train, y_test = train_test_split(df['clean_text'], df['Rating'], test_size=0.2, random_state=42)
+
+**Choice of the model**
+There are several classifiers that can be used for the problem of grading reviews. The classifiers we considered were:
+*   *Naive Bayes Multinomial Classifior*: is a probabilistic classifier based on Bayes' theorem. It is often used for classification problems, where the goal is to assign a class or category to a set of data based on certain characteristics. The "naive" (naive) approach derives from the assumption of conditional independence of characteristics, which simplifies the calculation of probabilities.
+*   *Support Vector Machine (SVM)*: Try to find an optimal hyperplane to separate the different classes in our feature space.
+*   *Logistic Regression*:  uses a logistics function to estimate the probability of belonging to a class.
+*   *Random Forest*: is an ensemble of decision trees, can be robust and suitable for complex datasets.
+*   Gradient Boosting: is an ensemble method that builds sequential trees, correcting the errors of previous trees.
+*   MLP Classifier: neural networks can be used for complex classification problems, especially if you have a large number of data.
+*   K-Nearest Neighbors (KNN): Assigns a class label based on the majority of the labels of its closest observations.
+
+By evaluating the performance of the models on the test set, using methods such as accuracy, recall and f1-score, we have established that the model that best suits our data is Logistic regression.
+
+**Logistic Regression Model:**
+*  Create a pipeline with TF-IDF vectorization and Logistic Regression.
+*  Train the logistic regression model on the training set.
+*  Predict labels on the test set and evaluate the model's performance using accuracy and a classification report.
+
+# Logistic Regression
+
+# Create and train the Logistic Regression model
+logreg_model = make_pipeline(TfidfVectorizer(), LogisticRegression(max_iter=1000))
+logreg_model.fit(X_train, y_train)
+
+# Predict labels on the test set
+y_pred_logreg = logreg_model.predict(X_test)
+
+# Evaluate the performance of the Logistic Regression model
+accuracy_logreg = accuracy_score(y_test, y_pred_logreg)
+report_logreg = classification_report(y_test, y_pred_logreg)
+
+print("\nLogistic Regression:")
+print(f'Accuracy: {accuracy_logreg}')
+print('Classification Report:\n', report_logreg)
+
+'''
+RESULTS:   precision     recall    f1-score   support
+accuracy                            0.62      4099
+macro avg     0.57        0.51      0.52      4099
+weighted avg  0.60        0.62      0.59      4099
+'''
+
+**Hyperparameter Tuning:**
+*  Define a parameter grid for hyperparameter tuning.
+*  Use GridSearchCV to find the best hyperparameters for the logistic regression model.
+
+'''Run time: around 5 minutes'''
+
+# Parameter grid for the Logistic Regression model
+logreg_param_grid = {
+    "logisticregression__C": [0.001, 0.01, 0.1, 1, 10, 100],
+    "logisticregression__max_iter": [50, 100],
+    "logisticregression__n_jobs": [-1],
+    'logisticregression__penalty': ['l2'],
+    "logisticregression__random_state": [42]
+}
+
+# Create the Logistic Regression model with the vectorizer
+logreg_model = make_pipeline(TfidfVectorizer(), LogisticRegression())
+
+# Create the GridSearchCV for Logistic Regression
+logreg_grid_search = GridSearchCV(logreg_model, logreg_param_grid, cv=5, scoring='accuracy')
+
+# Train the model using GridSearchCV
+logreg_grid_search.fit(X_train, y_train)
+
+# Display the best parameters and best accuracy
+print("Best parameters for Logistic Regression:", logreg_grid_search.best_params_)
+print("Best accuracy for Logistic Regression:", logreg_grid_search.best_score_)
+
+'''
+RESULTS:
+Best parameters for Logistic Regression: {'logisticregression__C': 1, 'logisticregression__max_iter': 50, 'logisticregression__n_jobs': -1, 'logisticregression__penalty': 'l2', 'logisticregression__random_state': 42}
+Best accuracy for Logistic Regression: 0.600902911477833
+'''
+
+**Train the Final Model:**
+*  Create a logistic regression model with the best hyperparameters.
+*  Train the model on the entire dataset.
+
+
+
+
+# Train the final model
+
+# Create the Logistic Regression model with the best parameters obtained
+best_C_value = 1.0
+best_max_iter=50
+best_n_jobs=-1
+best_penalty='l2'
+best_random_state=42
+
+best_logreg_model = make_pipeline(TfidfVectorizer(), LogisticRegression(C=best_C_value, max_iter=best_max_iter, n_jobs=best_n_jobs, penalty=best_penalty, random_state=best_random_state))
+
+# Train the model on the full dataset
+best_logreg_model.fit(X_train, y_train)
+
+
+# Create and train the TF-IDF vectorizer
+tfidf_vectorizer = TfidfVectorizer()
+X_train_tfidf = tfidf_vectorizer.fit_transform(X_train)
+
+**Evaluate on the Test Set:**
+*  Predict labels on the test set using the final logistic regression model.
+*  Evaluate the model's performance on the test set using accuracy and a classification report.
+
+# Evaluate on the Test Set
+
+# Predict labels on the test set
+y_pred_logreg = best_logreg_model.predict(X_test)
+
+# Evaluate the performance of the Logistic Regression model on the test set
+accuracy_logreg = accuracy_score(y_test, y_pred_logreg)
+report_logreg = classification_report(y_test, y_pred_logreg)
+
+print("Logistic Regression - Performance on the Test Set:")
+print(f'Accuracy: {accuracy_logreg}')
+print('Classification Report:\n', report_logreg)
+
+**Interpretation of the Model:**
+*  Access the coefficients of the logistic regression model.
+*  Map the coefficients to the corresponding words in the TF-IDF vectorizer.
+*  Display the top 10 words with the highest coefficients, providing insights into what features contribute most to the model's predictions.
+
+
+
+
+
+# Interpretation of the Model as a Barplot
+
+# Access the coefficients of the Logistic Regression model
+coefficients = best_logreg_model.named_steps['logisticregression'].coef_[0]
+
+# Map the coefficients to the words in the vectorizer
+feature_names = best_logreg_model.named_steps['tfidfvectorizer'].get_feature_names_out()
+
+# Create a map between words and their coefficients
+feature_coefficient_map = dict(zip(feature_names, coefficients))
+
+# Display the words with the highest coefficients
+top_features = sorted(feature_coefficient_map.items(), key=lambda x: x[1], reverse=True)[:10]
+features = [feature for feature, _ in top_features]
+coefficients = [coefficient for _, coefficient in top_features]
+
+# Plot the coefficients
+plt.figure(figsize=(10, 6))
+sns.barplot(x=coefficients, y=features)
+plt.xlabel("Coefficients")
+plt.ylabel("Features")
+plt.title("Top 10 Features with Highest Coefficients")
+plt.show()
+
+
+Finally, to **check the success of the project**, we decided to test the model on a new reception, which can be inserted directly from the keyboard
+
+# Predicting the rating
+
+def preprocess_review(review):
+    cleaned_review = review.lower()
+    cleaned_review = remove_punctuations(cleaned_review)
+    cleaned_review = remove_stopwords(cleaned_review)
+    cleaned_review = remove_freq_words(cleaned_review)
+    cleaned_review = remove_rare_words(cleaned_review)
+    cleaned_review = remove_spl_chars(cleaned_review)
+    #cleaned_review = lemmatize_words(cleaned_review)
+    cleaned_review = stem_words(cleaned_review)
+    cleaned_review = removal_url(cleaned_review)
+    cleaned_review = remove_html_tags(cleaned_review)
+    cleaned_review = correct_spelling(cleaned_review)
+
+    return cleaned_review
+
+def preprocess_input(input_text):
+    # Apply the same preprocessing steps as in the training phase
+    cleaned_input = preprocess_review(input_text)
+    return cleaned_input
+
+def predict_rating(input_text, model):
+    # Preprocess the input text
+    cleaned_input = preprocess_input(input_text)
+
+    # Make a prediction with the trained model and vectorizer
+    predicted_rating = model.predict([cleaned_input])[0]
+
+    return predicted_rating
+
+
+# Example of taking user input and predicting the rating
+user_input = input("Enter your hotel review: ")
+predicted_rating = predict_rating(user_input, best_logreg_model)
+
+print(f"\nPredicted Rating: {predicted_rating}")
